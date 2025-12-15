@@ -1,0 +1,149 @@
+// Elevation
+
+// 1) Load SRTM 30 m elevation
+var srtm = ee.Image('USGS/SRTMGL1_003');  // 30 m SRTM
+
+// 2) Load UK LiDAR Elevation
+var lidar = ee.Image('UK/EA/ENGLAND_1M_TERRAIN/2022');  // 1m
+
+// 3) Clip
+var srtmYS = srtm.clip(yorkshire);
+var lidarYS = lidar.clip(yorkshire);
+
+// 4) Visualization parameters
+var elevationVis = {
+  min: -10,            // tighten range for Missouri context
+  max: 300,
+  palette: ['08306b','2171b5','6baed6','c7e9b4','ffffcc','fed976','fd8d3c']
+};
+
+// 5) Add layers
+// Map.addLayer(srtm, {min:-10, max:300, palette:['006633','E5FFCC','662A00','D8D8D8','F5F5F5']}, 'SRTM (global)'); // global view
+Map.addLayer(srtmYS, elevationVis, 'SRTM Yorkshire (clipped)');
+Map.addLayer(
+  lidarYS.select('dtm'), // Digital Terrain Model (ground surface)
+  {min: -10, max: 300, palette: ['0000ff','00ff00','ffff00','ff0000']}, 'Yorkshire LiDAR DTM 1m');
+Map.addLayer(
+  lidarYS.select('dsm_first'), // Digital Surface Model (first returns, includes buildings/vegetation)
+  {min: -10, max: 300, palette: ['0000ff','00ff00','ffff00','ff0000']}, 'Yorkshire First DSM 1m');
+Map.addLayer(
+  lidarYS.select('dsm_last'), // Last return DSM
+  {min: -10, max: 300, palette: ['0000ff','00ff00','ffff00','ff0000']}, 'Yorkshire Last DSM 1m');
+
+// print min/max elevation
+var stats = srtmYS.reduceRegion({
+  reducer: ee.Reducer.minMax(),
+  geometry: yorkshire,
+  scale: 30,
+  maxPixels: 1e13
+});
+print('SRTM Min/max elevation in Yorkshire Coastline Area (m):', stats);
+
+// print min/max elevation
+var stats = lidarYS.reduceRegion({
+  reducer: ee.Reducer.minMax(),
+  geometry: yorkshire,
+  scale: 30,
+  maxPixels: 1e13
+});
+print('LiDAR Min/max elevation in Yorkshire Coastline Area (m):', stats);
+
+// 6) Fit the view to boundary (centers and zooms to show the whole state)
+Map.centerObject(yorkshire, null);  // lets EE auto-pick zoom to fully show geometry
+
+// EROSION RISK - SRTM
+
+// elevation risk
+
+// Classify erosion risk based on slope thresholds
+var elevationRisk = srtm.expression(
+  '(b < 2) ? 4 : (b < 5) ? 3 : (b < 10) ? 2 : 1',
+  {b: srtmYS}
+).rename('elevation_risk');
+// 1=Low (10m), 2=Moderate (5-10m), 3=High (2-5m), 4=Extreme (<2m)
+
+var elevationRiskMasked = elevationRisk.updateMask(srtmYS.mask());
+
+var elevationVis = {min: 1, max: 4, palette: ['green', 'yellow', 'orange', 'darkred']};
+Map.addLayer(elevationRiskMasked, elevationVis, 'Elevation Risk');
+Map.centerObject(yorkshire.geometry(), 7);
+
+// Calculate statewide erosion risk statistics
+var elevationStats = elevationRiskMasked.reduceRegion({
+  reducer: ee.Reducer.frequencyHistogram(),
+  geometry: yorkshire.geometry(),
+  scale: 90,
+  maxPixels: 1e13
+});
+print('Elevation Risk Distribution:', elevationStats);
+
+// distance to coast risk
+
+// raster coastline so distance transform works
+var coastRaster = ee.Image()
+  .paint(coastline, 1)
+  .selfMask();
+
+var distanceToCoast = coastRaster.fastDistanceTransform(30)
+  .sqrt()
+  .multiply(30)
+  .rename('dist_coast');
+  
+var distanceRisk = distanceToCoast.expression(
+  '(d < 500) ? 4 : (d < 1000) ? 3 : (d < 2000) ? 2 : 1',
+  {d: distanceToCoast}
+).rename('distance_risk');
+// 1=Low (<500m), 2=Moderate (<1000m), 3=High (<2000), 4=Extreme (>=2000m)
+
+var distanceRiskMasked = distanceRisk.updateMask(srtmYS.mask());
+
+var distanceVis = {min: 1, max: 4, palette: ['green', 'yellow', 'orange', 'darkred']};
+Map.addLayer(distanceRiskMasked, distanceVis, 'Distance Risk');
+
+var vulnerability = elevationRisk.multiply(0.6)
+  .add(distanceRisk.multiply(0.4))
+  .rename('vulnerability')
+  .clip(yorkshire);
+  
+var vulnerabilityVis = {min: 1, max: 4, palette: ['green', 'yellow', 'orange', 'darkred']};
+Map.addLayer(vulnerability, vulnerabilityVis, 'Vulnerability to Coastal Erosion');
+
+// EROSION RISK - LiDAR
+
+// elevation risk
+
+// Classify erosion risk based on slope thresholds
+var L_elevationRisk = lidar.select('dtm').expression(
+  '(b < 2) ? 4 : (b < 5) ? 3 : (b < 10) ? 2 : 1',
+  {b: lidarYS.select('dtm')}
+).rename('elevation_risk_lidar');
+// 1=Low (10m), 2=Moderate (5-10m), 3=High (2-5m), 4=Extreme (<2m)
+
+var L_elevationRiskMasked = L_elevationRisk.updateMask(lidarYS.select('dtm').mask());
+
+var L_elevationVis = {min: 1, max: 4, palette: ['green', 'yellow', 'orange', 'darkred']};
+Map.addLayer(L_elevationRiskMasked, L_elevationVis, 'LiDAR Elevation Risk');
+Map.centerObject(yorkshire.geometry(), 7);
+
+// Calculate statewide erosion risk statistics
+var L_elevationStats = L_elevationRiskMasked.reduceRegion({
+  reducer: ee.Reducer.frequencyHistogram(),
+  geometry: yorkshire.geometry(),
+  scale: 90,
+  maxPixels: 1e13
+});
+print('LiDAR Elevation Risk Distribution:', L_elevationStats);
+
+// distance to coast risk
+var L_distanceRiskMasked = distanceRisk.updateMask(lidarYS.select('dtm').mask());
+
+var L_distanceVis = {min: 1, max: 4, palette: ['green', 'yellow', 'orange', 'darkred']};
+Map.addLayer(L_distanceRiskMasked, L_distanceVis, 'Distance Risk');
+
+var L_vulnerability = L_elevationRisk.multiply(0.6)
+  .add(distanceRisk.multiply(0.4))
+  .rename('LiDAR vulnerability')
+  .clip(yorkshire);
+  
+var L_vulnerabilityVis = {min: 1, max: 4, palette: ['green', 'yellow', 'orange', 'darkred']};
+Map.addLayer(L_vulnerability, L_vulnerabilityVis, 'LiDAR Vulnerability to Coastal Erosion');

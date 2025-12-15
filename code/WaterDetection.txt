@@ -1,0 +1,184 @@
+var yorkshireGeometry = yorkshire.geometry();
+Map.centerObject(yorkshireGeometry, 10); // Center the map on the polygon
+// Map.addLayer(yorkshireGeometry, {color: 'FF0000'}, 'Yorkshire Study Area');
+
+// -------------------------
+// Sentinel - 2
+// -------------------------
+
+// Cloud masking function using SCL band
+function maskS2_SCL(image) {
+  var scl = image.select('SCL');
+  var mask = scl.neq(3)      // cloud shadow
+    .and(scl.neq(8))         // medium clouds
+    .and(scl.neq(9))         // high clouds
+    .and(scl.neq(10))        // cirrus
+    .and(scl.neq(11));       // snow/ice
+  return image.updateMask(mask);
+}
+
+// 2020
+var s2_2020 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2020-01-01', '2020-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40));
+
+var s2Comp_2020 = s2_2020.map(maskS2_SCL).median().clip(yorkshireGeometry);
+
+// 2021
+var s2_2021 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2021-01-01', '2021-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40));
+
+var s2Comp_2021 = s2_2021.map(maskS2_SCL).median().clip(yorkshireGeometry);
+
+// 2022
+var s2_2022 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2022-01-01', '2022-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40));
+
+var s2Comp_2022 = s2_2022.map(maskS2_SCL).median().clip(yorkshireGeometry);
+
+// 2023
+var s2_2023 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2023-01-01', '2023-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40));
+
+var s2Comp_2023 = s2_2023.map(maskS2_SCL).median().clip(yorkshireGeometry);
+
+// 2024
+var s2_2024 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2024-01-01', '2024-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40));
+
+var s2Comp_2024 = s2_2024.map(maskS2_SCL).median().clip(yorkshireGeometry);
+
+// 2025
+var s2_2025 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2025-01-01', '2025-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40));
+
+var s2Comp_2025 = s2_2025.map(maskS2_SCL).median().clip(yorkshireGeometry);
+
+// compute NDWI
+function addNDWI(image) {
+  var ndwi = image.normalizedDifference(['B3','B8']).rename('NDWI');
+  return image.addBands(ndwi);
+}
+
+var s2_2020_WithNDWI = addNDWI(s2Comp_2020);
+var s2_2021_WithNDWI = addNDWI(s2Comp_2021);
+var s2_2022_WithNDWI = addNDWI(s2Comp_2022);
+var s2_2023_WithNDWI = addNDWI(s2Comp_2023);
+var s2_2024_WithNDWI = addNDWI(s2Comp_2024);
+var s2_2025_WithNDWI = addNDWI(s2Comp_2025);
+
+// water mask
+function waterMask(image) {
+  var img = image
+  var water = img.select('NDWI')
+                 .gt(0.3)
+                 .selfMask()
+                 .clip(yorkshireGeometry);
+  return water;
+}
+
+// water mask
+var water2020 = waterMask(s2_2020_WithNDWI);
+// Map.addLayer(water2020, {palette:'blue'}, 'Water 2020');
+
+var water2021 = waterMask(s2_2021_WithNDWI);
+// Map.addLayer(water2021, {palette:'blue'}, 'Water 2021');
+
+var water2022 = waterMask(s2_2022_WithNDWI);
+// Map.addLayer(water2022, {palette:'blue'}, 'Water 2022');
+
+var water2023 = waterMask(s2_2023_WithNDWI);
+// Map.addLayer(water2023, {palette:'blue'}, 'Water 2023');
+
+var water2024 = waterMask(s2_2024_WithNDWI);
+// Map.addLayer(water2024, {palette:'blue'}, 'Water 2024');
+
+var water2025 = waterMask(s2_2025_WithNDWI);
+// Map.addLayer(water2025, {palette:'blue'}, 'Water 2025');
+
+var waterMasks = [
+  water2020, water2021, water2022, water2023, water2024, water2025
+];
+var years = [2020, 2021, 2022, 2023, 2024, 2025];
+
+// calculate water area in km²
+function calculateWaterArea(waterImage, geometry) {
+  // m²
+  var pixelArea = ee.Image.pixelArea().updateMask(waterImage);
+  
+  // sum pixel area
+  var area = pixelArea.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: geometry,
+    scale: 10,
+    maxPixels: 1e13
+  }).get('area');
+  
+  return ee.Number(area).divide(1e6);
+}
+
+// calculate water areas
+var waterAreas = years.map(function(y, index) {
+  var area = calculateWaterArea(waterMasks[index], yorkshireGeometry);
+  return ee.Dictionary({
+    year: y,
+    water_area_km2: area
+  });
+});
+
+// Print yearly water areas
+print('Yearly Water Areas (km²):', waterAreas);
+
+// Step 3: Compute per-pixel change between consecutive years
+var waterChanges = [];
+for (var i = 1; i < waterMasks.length; i++) {
+  var prev = waterMasks[i - 1];
+  var curr = waterMasks[i];
+  
+  // 1 = new water, -1 = lost water, 0 = no change
+  var change = curr.unmask(0).subtract(prev.unmask(0));
+
+  waterChanges.push(change);
+  
+  // Add to map for visualization
+  Map.addLayer(change, {min:-1, max:1, palette:['red','white','blue']}, 
+              'Water Change ' + years[i-1] + '-' + years[i]);
+}
+
+// Step 4: Compute simple metrics for each year
+var waterChangeMetrics = waterChanges.map(function(change, index) {
+  var gained = change.gt(0).multiply(ee.Image.pixelArea())
+                     .reduceRegion({
+                       reducer: ee.Reducer.sum(),
+                       geometry: yorkshireGeometry,
+                       scale: 10,
+                       maxPixels: 1e13
+                     }).get('NDWI'); // NDWI band name, adjust if needed
+
+  var lost = change.lt(0).multiply(ee.Image.pixelArea())
+                    .reduceRegion({
+                       reducer: ee.Reducer.sum(),
+                       geometry: yorkshireGeometry,
+                       scale: 10,
+                       maxPixels: 1e13
+                    }).get('NDWI');
+
+  return ee.Dictionary({
+    year: years[index + 1],
+    gained_km2: ee.Number(gained).divide(1e6),
+    lost_km2: ee.Number(lost).divide(1e6)
+  });
+});
+
+print('Water change metrics (km²):', waterChangeMetrics);

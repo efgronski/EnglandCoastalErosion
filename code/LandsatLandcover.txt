@@ -1,0 +1,361 @@
+var yorkshireGeometry = yorkshire.geometry();
+Map.centerObject(yorkshireGeometry, 10); // Center the map on the polygon
+// Map.addLayer(yorkshireGeometry, {color: 'FF0000'}, 'Yorkshire Study Area');
+
+// -------------------------
+// Landsat Composites
+// -------------------------
+
+// Cloud/shadow mask for Landsat L2 using QA_PIXEL bits
+// Bits: 3 = cloud shadow, 4 = snow, 5 = cloud, 7 = cirrus
+function maskL2_QA(image) {
+  var qa = image.select('QA_PIXEL');
+  var cloudShadowBitMask = 1 << 3;
+  var snowBitMask        = 1 << 4;
+  var cloudBitMask       = 1 << 5;
+  var cirrusBitMask      = 1 << 7;
+
+  var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
+    .and(qa.bitwiseAnd(snowBitMask).eq(0))
+    .and(qa.bitwiseAnd(cloudBitMask).eq(0))
+    .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  // Scale optical SR bands: scale = 0.0000275, offset = -0.2 (per USGS spec)
+  var optical = image.select(['SR_B1','SR_B2','SR_B3','SR_B4','SR_B5','SR_B7'])
+                    .multiply(0.0000275).add(-0.2);
+
+  return image.addBands(optical, null, true).updateMask(mask);
+}
+
+// 2000
+var l7_2000 = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2")
+  .filterBounds(yorkshireGeometry)
+  .filterDate('1999-01-01', '2001-12-31')
+  .filter(ee.Filter.lt('CLOUD_COVER', 60));
+  
+var landsat7Masked_2000 = l7_2000.map(maskL2_QA);
+var landsat7Composite_2000 = landsat7Masked_2000.median().clip(yorkshireGeometry);
+
+// 2005
+var l7_2005 = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2")
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2004-01-01', '2006-12-31')
+  .filter(ee.Filter.lt('CLOUD_COVER', 60));
+
+var landsat7Masked_2005 = l7_2005.map(maskL2_QA);
+var landsat7Composite_2005 = landsat7Masked_2005.median().clip(yorkshireGeometry);
+
+// 2010
+var l7_2010 = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2")
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2009-01-01', '2012-12-31')
+  .filter(ee.Filter.lt('CLOUD_COVER', 60));
+  
+var landsat7Masked_2010 = l7_2010.map(maskL2_QA);
+var landsat7Composite_2010 = landsat7Masked_2010.median().clip(yorkshireGeometry);
+
+
+// 2015
+var l8_2015 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2015-01-01', '2015-12-31');
+
+var l9_2015 = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2015-01-01', '2015-12-31');
+
+var landsat_2015 = l8_2015.merge(l9_2015)
+  .filter(ee.Filter.lt('CLOUD_COVER', 60));
+var landsatMasked_2015 = landsat_2015.map(maskL2_QA);
+var landsatComposite_2015 = landsatMasked_2015.median().clip(yorkshireGeometry);
+
+// 2020
+var l8_2020 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2020-01-01', '2020-12-31');
+
+var l9_2020 = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2020-01-01', '2020-12-31');
+
+var landsat_2020 = l8_2020.merge(l9_2020)
+  .filter(ee.Filter.lt('CLOUD_COVER', 60));
+var landsatMasked_2020 = landsat_2020.map(maskL2_QA);
+var landsatComposite_2020 = landsatMasked_2020.median().clip(yorkshireGeometry);
+
+// 2025
+var l8_2025 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2025-01-01', '2025-12-31');
+
+var l9_2025 = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')
+  .filterBounds(yorkshireGeometry)
+  .filterDate('2025-01-01', '2025-12-31');
+
+var landsat_2025 = l8_2025.merge(l9_2025)
+  .filter(ee.Filter.lt('CLOUD_COVER', 60));
+var landsatMasked_2025 = landsat_2025.map(maskL2_QA);
+var landsatComposite_2025 = landsatMasked_2025.median().clip(yorkshireGeometry);
+
+// ============================================================
+// Remote Sensing Classification using ESA WorldCover (all 11 classes)
+// Labels: ESA WorldCover v200 2021 codes remapped to 0..10
+// ============================================================
+
+function getPredictorBands(image) {
+  var bandNames = image.bandNames();
+  var hasB6 = bandNames.contains('SR_B6');
+
+  // Landsat 8/9
+  var l8Bands = [
+    'SR_B2','SR_B3','SR_B4','SR_B5','SR_B6','SR_B7'
+  ];
+
+  // Landsat 7 (no SR_B6)
+  var l7Bands = [
+    'SR_B2','SR_B3','SR_B4','SR_B5','SR_B7'
+  ];
+
+  return ee.List(
+    ee.Algorithms.If(hasB6, l8Bands, l7Bands)
+  );
+}
+
+function scaleLandsatSR(img) {
+  return img; // already scaled in maskL2_QA
+}
+
+function runLandcoverClassification(landsatComposite, year) {
+
+  // 1) Study area
+  var roi = yorkshireGeometry;
+
+  // 2) Use PROVIDED composite (this is the key change)
+  var image = scaleLandsatSR(landsatComposite);
+
+  var ndvi = image.normalizedDifference(['SR_B5','SR_B4']).rename('NDVI');
+  var ndwi = image.normalizedDifference(['SR_B3','SR_B5']).rename('NDWI');
+  image = image.addBands([ndvi, ndwi]);
+
+  var srBands = getPredictorBands(image);
+  var predictors = image.select(srBands.add('NDVI').add('NDWI'));
+
+  // 3) ESA WorldCover (unchanged)
+  var wc = ee.Image('ESA/WorldCover/v200/2021');
+  var wcBand = 'Map';
+
+  var wcCodes = [10,20,30,40,50,60,70,80,90,95,100];
+  var wcNames = [
+    'Tree cover','Shrubland','Grassland','Cropland','Built-up',
+    'Bare / sparse','Snow & ice','Water','Herbaceous wetland',
+    'Mangroves','Moss & lichen'
+  ];
+  var wcPalette = [
+    '006400','ffbb22','ffff4c','f096ff','fa0000',
+    'b4b4b4','f0f0f0','0064c8','0096a0','00cf75','fae6a0'
+  ];
+
+  var wcCodesList = ee.List(wcCodes);
+  var toIdx = ee.List.sequence(0, wcCodes.length - 1);
+  var ones = ee.List.repeat(1, wcCodesList.length());
+
+  var keptMask = wc.select(wcBand)
+    .remap(wcCodesList, ones)
+    .neq(0);
+
+  var labels = wc.select(wcBand)
+    .updateMask(keptMask)
+    .remap(wcCodesList, toIdx)
+    .rename('landcover')
+    .toInt();
+
+  // 4) Stratified sampling
+  var sample = predictors.addBands(labels).stratifiedSample({
+    numPoints: 2000,
+    classBand: 'landcover',
+    region: roi,
+    scale: 10,
+    geometries: true,
+    seed: 42
+  });
+
+  // 5) Train/test split
+  var withRand = sample.randomColumn('rand', 42);
+  var train = withRand.filter(ee.Filter.lt('rand', 0.7));
+  var test = withRand.filter(ee.Filter.gte('rand', 0.7));
+
+  // 6) Train RF
+  var clf = ee.Classifier.smileRandomForest({
+    numberOfTrees: 300,
+    seed: 42
+  }).train({
+    features: train,
+    classProperty: 'landcover',
+    inputProperties: predictors.bandNames()
+  });
+
+  // 7) Classify
+  var classified = predictors.classify(clf)
+    .rename('classification')
+    .set('year', year);
+
+  // 8) Accuracy
+  var testPred = test.classify(clf);
+  var cm = testPred.errorMatrix('landcover', 'classification');
+
+  print('=== Year:', year, '===');
+  print('Confusion Matrix:', cm);
+  print('Overall Accuracy:', cm.accuracy());
+  print('Kappa:', cm.kappa());
+
+  // 9) Area by class
+  var areaImage = ee.Image.pixelArea().addBands(classified);
+  var areaStats = areaImage.reduceRegion({
+    reducer: ee.Reducer.sum().group({
+      groupField: 1,
+      groupName: 'class'
+    }),
+    geometry: roi,
+    scale: 30,
+    maxPixels: 1e10
+  });
+
+  print('Area (m^2) by class:', areaStats);
+  
+  // Convert groups (List of Dictionaries) to a FeatureCollection for robust filtering/sorting
+  var groups = ee.List(areaStats.get('groups')); // [{class: idx, sum: area}, ...]
+  var fcGroups = ee.FeatureCollection(groups.map(function(g) {
+    var d = ee.Dictionary(g);
+    return ee.Feature(null, {class: d.get('class'), area: d.get('sum')});
+  }));
+  
+  // Sort by class index and extract arrays
+  var fcSorted = fcGroups.sort('class');
+  var presentIdx = fcSorted.aggregate_array('class'); // ee.List
+  var sumsByIdx = fcSorted.aggregate_array('area');   // ee.List
+  
+  // Build labels only for present classes: "idx: name"
+  var wcNamesList = ee.List(wcNames); // server-ize names
+  var labelsPresent = presentIdx.map(function(idx){
+    idx = ee.Number(idx);
+    var idxStr = idx.format();
+    var nameStr = ee.String(wcNamesList.get(idx));
+    return ee.String(idxStr).cat(': ').cat(nameStr);
+  });
+  
+  return classified;
+}
+
+var classified_2000 = runLandcoverClassification(landsat7Composite_2000, 2000);
+var classified_2005 = runLandcoverClassification(landsat7Composite_2005, 2005);
+var classified_2010 = runLandcoverClassification(landsat7Composite_2010, 2010);
+var classified_2015 = runLandcoverClassification(landsatComposite_2015, 2015);
+var classified_2020 = runLandcoverClassification(landsatComposite_2020, 2020);
+var classified_2025 = runLandcoverClassification(landsatComposite_2025, 2025);
+
+// analyze vulnerability with elevation and distance to coast
+
+// Elevation
+
+// Load UK LiDAR Elevation
+var lidar = ee.Image('UK/EA/ENGLAND_1M_TERRAIN/2022');  // 1m
+
+// Clip
+var lidarYS = lidar.clip(yorkshire);
+
+// Fit the view to boundary (centers and zooms to show the whole state)
+Map.centerObject(yorkshire, null);  // lets EE auto-pick zoom to fully show geometry
+
+// EROSION RISK
+
+// distance to coast risk
+
+// raster coastline so distance transform works
+var coastRaster = ee.Image()
+  .paint(coastline, 1)
+  .selfMask();
+
+var distanceToCoast = coastRaster.fastDistanceTransform(30)
+  .sqrt()
+  .multiply(30)
+  .rename('dist_coast');
+  
+var distanceRisk = distanceToCoast.expression(
+  '(d < 500) ? 4 : (d < 1000) ? 3 : (d < 2000) ? 2 : 1',
+  {d: distanceToCoast}
+).rename('distance_risk');
+// 1=Low (>=2000m), 2=Moderate (<2000m), 3=High (<1000), 4=Extreme (<500m)
+
+var L_elevationRisk = lidar.select('dtm').expression(
+  '(b < 2) ? 4 : (b < 5) ? 3 : (b < 10) ? 2 : 1',
+  {b: lidarYS.select('dtm')}
+).rename('elevation_risk_lidar');
+// 1=Low (10m), 2=Moderate (5-10m), 3=High (2-5m), 4=Extreme (<2m)
+
+var L_elevationRiskMasked = L_elevationRisk.updateMask(lidarYS.select('dtm').mask());
+var L_distanceRiskMasked = distanceRisk.updateMask(lidarYS.select('dtm').mask());
+
+// create coastal erosion risk weights by land cover
+function landcover_to_risk(landcover_img){
+  var L_landcoverRisk = landcover_img.expression(
+    '(b == 4) ? 5' +        // Built-up
+    ' : (b == 3) ? 4' +     // Cropland
+    ' : (b == 2) ? 3' +     // Grassland
+    ' : (b == 1) ? 2' +     // Shrubland
+    ' : 1',
+    {b: landcover_img}
+  ).rename('landcover_risk_lidar')
+  
+  return L_landcoverRisk
+}
+// 1=Low (Everything else), 2=Moderate/Low (Shrubland), 3=Moderate (Grassland), 4=High (Cropland), 5=Extreme (Built-Up)
+
+var lcRisk_2000 = landcover_to_risk(classified_2000);
+var lcRisk_2005 = landcover_to_risk(classified_2005);
+var lcRisk_2010 = landcover_to_risk(classified_2010);
+var lcRisk_2015 = landcover_to_risk(classified_2015);
+var lcRisk_2020 = landcover_to_risk(classified_2020);
+var lcRisk_2025 = landcover_to_risk(classified_2025);
+
+var lcRiskMasked_2000 = lcRisk_2000.updateMask(lidarYS.select('dtm').mask());
+var lcRiskMasked_2005 = lcRisk_2005.updateMask(lidarYS.select('dtm').mask());
+var lcRiskMasked_2010 = lcRisk_2010.updateMask(lidarYS.select('dtm').mask());
+var lcRiskMasked_2015 = lcRisk_2015.updateMask(lidarYS.select('dtm').mask());
+var lcRiskMasked_2020 = lcRisk_2020.updateMask(lidarYS.select('dtm').mask());
+var lcRiskMasked_2025 = lcRisk_2025.updateMask(lidarYS.select('dtm').mask());
+
+var L_landcoverVis = {min: 1, max: 5, palette: ['blue', 'green', 'yellow', 'orange', 'darkred']};
+
+Map.addLayer(lcRiskMasked_2000, L_landcoverVis, 'LiDAR LandCover Risk 2000');
+Map.addLayer(lcRiskMasked_2005, L_landcoverVis, 'LiDAR LandCover Risk 2005');
+Map.addLayer(lcRiskMasked_2010, L_landcoverVis, 'LiDAR LandCover Risk 2010');
+Map.addLayer(lcRiskMasked_2015, L_landcoverVis, 'LiDAR LandCover Risk 2015');
+Map.addLayer(lcRiskMasked_2020, L_landcoverVis, 'LiDAR LandCover Risk 2020');
+Map.addLayer(lcRiskMasked_2025, L_landcoverVis, 'LiDAR LandCover Risk 2025');
+
+function get_vulnerability(landcover_risk){
+var L_vulnerability = landcover_risk.multiply(0.50)
+  .add(L_elevationRisk.multiply(0.30)
+  .add(distanceRisk.multiply(0.20)))
+  .rename('LiDAR vulnerability')
+  .clip(yorkshire);
+  
+  return L_vulnerability;
+}
+var L_vulnerabilityVis = {min: 1, max: 4, palette: ['green', 'yellow', 'orange', 'darkred']};
+
+var allRisk_2000 = get_vulnerability(lcRiskMasked_2000)
+var allRisk_2005 = get_vulnerability(lcRiskMasked_2005)
+var allRisk_2010 = get_vulnerability(lcRiskMasked_2010)
+var allRisk_2015 = get_vulnerability(lcRiskMasked_2015)
+var allRisk_2020 = get_vulnerability(lcRiskMasked_2020)
+var allRisk_2025 = get_vulnerability(lcRiskMasked_2025)
+
+Map.addLayer(allRisk_2000, L_vulnerabilityVis, 'LiDAR Vulnerability to Coastal Erosion 2000');
+Map.addLayer(allRisk_2005, L_vulnerabilityVis, 'LiDAR Vulnerability to Coastal Erosion 2005');
+Map.addLayer(allRisk_2010, L_vulnerabilityVis, 'LiDAR Vulnerability to Coastal Erosion 2010');
+Map.addLayer(allRisk_2015, L_vulnerabilityVis, 'LiDAR Vulnerability to Coastal Erosion 2015');
+Map.addLayer(allRisk_2020, L_vulnerabilityVis, 'LiDAR Vulnerability to Coastal Erosion 2020');
+Map.addLayer(allRisk_2025, L_vulnerabilityVis, 'LiDAR Vulnerability to Coastal Erosion 2025');
+
+Map.centerObject(yorkshire.geometry(), 7);
